@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0b0d">
+  <meta name="description" content="Webcorder is a local screen and reaction recorder with camera overlay.">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/assets/icons/icon-256.png">
+  <link rel="stylesheet" href="/style.css">
+  <title>Webcorder — Record your screen and reactions</title>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">WC<span class="brand-dot"></span></span><div><strong>WEBCORDER</strong></div></div>
+      <div class="header-right"><span id="serverStatus" class="server-pill">● LOCAL APP</span><button id="settingsBtn" class="ghost small settings-button" type="button">Sources</button><button id="installBtn" class="ghost small" hidden>Install app</button><button id="helpBtn" class="ghost small">Help</button></div>
+    </header>
+
+    <div class="workspace">
+      <aside class="sidebar">
+        <div class="section-title"><span>01</span> CAPTURE SOURCE</div>
+        <div class="source-tabs" role="tablist" aria-label="Capture source">
+          <button class="source-tab active" data-mode="screen" role="tab" aria-selected="true">Screen</button>
+          <button class="source-tab" data-mode="local" role="tab" aria-selected="false">Local video</button>
+          <button class="source-tab" data-mode="web" role="tab" aria-selected="false">Web video</button>
+        </div>
+        <div id="screenOptions" class="source-options">
+          <button id="chooseScreenBtn" class="outline full">Preview desktop <span>↗</span></button>
+          <div id="screenChosen" class="selected-source">Full desktop</div>
+        </div>
+        <div id="localOptions" class="source-options" hidden>
+          <label class="file-button outline full">Choose a video file<input id="localFile" type="file" accept="video/*,.mkv,.mov,.m4v" hidden></label>
+          <div id="localChosen" class="selected-source">No video selected</div>
+        </div>
+        <div id="webOptions" class="source-options" hidden>
+          <label class="field-label" for="webUrl">VIDEO LINK</label>
+          <input id="webUrl" class="text-field" type="url" placeholder="YouTube, Vimeo, or direct video URL" autocomplete="off">
+          <button id="openLinkBtn" class="outline full">Load in reaction player <span>▶</span></button>
+          <div id="webLinkState" class="selected-source">No web video loaded</div>
+          <button id="externalLinkBtn" class="text-button external-link" hidden>Open in browser if embedding is blocked ↗</button>
+          <p class="micro-note">Some sites block in-app playback.</p>
+        </div>
+
+        <div class="divider"></div>
+        <div class="section-title"><span>02</span> CAMERA</div>
+        <div class="field-row"><label class="field-label" for="cameraSelect">CAMERA SOURCE</label><button id="refreshCamerasBtn" class="text-button">Refresh ↻</button></div>
+        <select id="cameraSelect" class="select-field"><option value="">No camera</option></select>
+        <div id="cameraState" class="device-state">Select a camera for a reaction overlay.</div>
+        <label class="field-label" for="backgroundSelect">CAMERA BACKGROUND</label>
+        <select id="backgroundSelect" class="select-field">
+          <option value="">Natural camera</option>
+          <option value="alpine-lake.jpg">Alpine lake</option>
+          <option value="sunlit-meadow.jpg">Sunlit meadow</option>
+          <option value="tropical-waterfall.jpg">Tropical waterfall</option>
+        </select>
+        <label class="file-button muted-file">+ Upload your background<input id="customBackground" type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
+        <div class="background-thumbs" aria-label="Nature backgrounds">
+          <button class="background-thumb" data-background="alpine-lake.jpg" title="Alpine lake"><img src="/assets/backgrounds/alpine-lake.jpg" alt="Alpine lake"></button>
+          <button class="background-thumb" data-background="sunlit-meadow.jpg" title="Sunlit meadow"><img src="/assets/backgrounds/sunlit-meadow.jpg" alt="Sunlit meadow"></button>
+          <button class="background-thumb" data-background="tropical-waterfall.jpg" title="Tropical waterfall"><img src="/assets/backgrounds/tropical-waterfall.jpg" alt="Tropical waterfall"></button>
+        </div>
+
+        <div class="divider"></div>
+        <div class="section-title"><span>03</span> RECORDING</div>
+        <label class="switch-row"><span>Microphone <small>Your commentary voice</small></span><input id="micToggle" type="checkbox"><i></i></label>
+        <label class="switch-row"><span>Desktop audio <small>Video & app sound</small></span><input id="audioToggle" type="checkbox" checked><i></i></label>
+        <label class="field-label" for="fpsSelect">FRAME RATE</label><select id="fpsSelect" class="select-field"><option>15</option><option selected>24</option><option>30</option></select>
+      </aside>
+
+      <main class="main-panel">
+        <div class="panel-head"><div><span class="eyebrow">WEBCORDER STUDIO</span><h1 id="workspaceTitle">Screen recorder</h1></div><div id="liveBadge" class="live-badge"><span></span> READY</div></div>
+        <div class="stage-tabs" role="tablist" aria-label="Viewer"><button id="previewTab" class="stage-tab active" aria-selected="true">Recorder preview</button><button id="playerTab" class="stage-tab" aria-selected="false">Reaction player</button></div>
+        <div id="previewStage" class="stage">
+          <img id="previewImage" alt="Live screen and camera preview" hidden>
+          <div id="previewEmpty" class="stage-empty"><div class="stage-icon">▣</div><h2>Everything in frame.</h2><p>Preview shows the desktop and camera without saving a file.</p></div>
+          <div id="cameraDragHint" class="drag-hint" hidden>Drag the round camera window anywhere on your desktop</div>
+        </div>
+        <div id="playerStage" class="stage player-stage" hidden>
+          <div id="playerMedia" class="player-media">
+            <video id="localPlayer" controls controlslist="nofullscreen" playsinline preload="metadata" hidden></video>
+            <video id="webVideoPlayer" controls controlslist="nofullscreen" playsinline preload="metadata" hidden></video>
+            <iframe id="webFrame" title="Web video player" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" hidden></iframe>
+            <div id="playerEmpty" class="stage-empty"><div class="stage-icon">▶</div><h2>Add a video</h2><p>Local file or web link</p></div>
+          </div>
+          <div id="cameraDock" class="camera-dock">
+            <div id="cameraBubble" class="camera-bubble" aria-label="Reaction camera" hidden><img id="cameraBubbleImage" alt="Live reaction camera"><span>CAMERA</span></div>
+            <div id="cameraDockText" class="camera-dock-text">Select camera</div>
+            <button id="cameraOrderBtn" class="camera-order-button" type="button">↑ Camera on top</button>
+          </div>
+          <button id="playerStopBtn" class="player-stop" type="button" hidden>■ Stop & save</button>
+          <button id="exitFullscreenBtn" class="player-exit" type="button" hidden>⛶ Exit full screen</button>
+        </div>
+        <div class="transport"><div class="transport-left"><button id="previewBtn" class="secondary">Preview</button><button id="recordBtn" class="primary"><span class="record-dot"></span> Start recording</button><button id="stopBtn" class="secondary" disabled>Stop preview</button><button id="fullscreenBtn" class="secondary" type="button" hidden>⛶ Full screen</button></div><div class="transport-right"><span id="timer">—</span><span class="transport-separator"></span><span id="recordingState">Ready to record</span></div></div>
+        <div class="bottom-line"><span id="message" role="status">Ready.</span><a id="downloadLink" href="#" hidden>Download recording ↗</a></div>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="helpDialog"><div class="dialog-head"><h2>How Webcorder works</h2><button id="closeHelpBtn" class="ghost">✕</button></div><ol><li>Choose <strong>Screen</strong>, <strong>Local video</strong>, or <strong>Web video</strong>.</li><li>Select a camera and optional nature background.</li><li>Press <strong>Preview</strong>, then <strong>Start recording</strong>. Your video saves to <code>~/Videos/Webcorder</code>.</li></ol><p>Web video loads in the reaction player when the site allows embedding. Sites that block embedding need their own browser tab; Webcorder does not bypass those restrictions.</p></dialog>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

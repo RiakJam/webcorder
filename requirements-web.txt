@@ -1,0 +1,3 @@
+mediapipe>=1.2,<2
+pyzmq>=27,<28
+pillow>=11,<13

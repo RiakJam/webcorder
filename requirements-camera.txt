@@ -1,2 +1,3 @@
 mediapipe>=1.2,<2
 pyzmq>=27,<28
+python-vlc>=3,<4
