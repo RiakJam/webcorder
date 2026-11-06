@@ -65,6 +65,7 @@ class CaptureManager:
         self.stopping = False
         self.port = None
         self.width, self.height = display_size()
+        self.preview_height = 360
         self.x, self.y = max(0, self.width - 344), max(0, self.height - 344)
 
     def status(self) -> dict:
@@ -93,6 +94,9 @@ class CaptureManager:
         source = settings.get('source', 'screen')
         if source not in ('screen', 'local', 'web'):
             raise ValueError('Invalid capture source.')
+        camera_layout = str(settings.get('cameraLayout') or 'floating') if source == 'screen' else 'floating'
+        if camera_layout not in ('floating', 'top', 'bottom'):
+            raise ValueError('Invalid camera layout.')
         camera_name = str(settings.get('camera') or '')
         available = dict(cameras())
         camera = available.get(camera_name)
@@ -137,8 +141,10 @@ class CaptureManager:
             folder.mkdir(parents=True, exist_ok=True)
             output = folder / f'Webcorder-{time.strftime("%Y%m%d-%H%M%S")}.mp4'
         player_camera = bool(camera and source in ('local', 'web'))
-        screen_float = bool(camera and source == 'screen' and sys.platform != 'win32')
-        use_worker = bool(camera and sys.platform != 'win32' and not screen_float and (phone or image or player_camera))
+        screen_float = bool(camera and source == 'screen' and camera_layout == 'floating' and sys.platform != 'win32')
+        screen_stack = bool(camera and source == 'screen' and camera_layout in ('top', 'bottom'))
+        preview_height = max(2, round(640 * self.height * (2 if screen_stack else 1) / self.width / 2) * 2)
+        use_worker = bool(camera and sys.platform != 'win32' and not screen_float and (phone or image or player_camera or screen_stack))
         if player_camera and sys.platform == 'win32':
             raise ValueError('Reaction camera preview is available on Kali first.')
         read_fd = write_fd = None
@@ -172,7 +178,7 @@ class CaptureManager:
                 worker_args = [str(worker_python), str(ROOT / 'camera_worker.py'),
                                '--camera', camera, '--name', camera_name, '--fps', '10',
                                '--background', 'Person background' if image else 'None']
-                if player_camera:
+                if player_camera or screen_stack:
                     worker_args += ['--wide']
                 if image:
                     worker_args += ['--image', str(image)]
@@ -189,7 +195,7 @@ class CaptureManager:
                     background='Person background' if image else 'None', image=image,
                     preview=capture_preview, camera_pipe=read_fd, position=(self.x, self.y), zmq_port=port,
                     screen_origin=capture_origin,
-                    camera_mjpeg=False)
+                    camera_mjpeg=False, camera_layout=camera_layout, preview_height=preview_height)
                 # The low-latency FFmpeg path for a built-in camera can use MJPEG.
                 if camera and not use_worker and not screen_float and sys.platform != 'win32':
                     from webcorder import supports_mjpeg
@@ -200,7 +206,8 @@ class CaptureManager:
                             desktop_audio=bool(settings.get('desktopAudio', True)),
                             background='None', image=None, preview=capture_preview,
                             screen_origin=capture_origin,
-                            position=(self.x, self.y), zmq_port=port, camera_mjpeg=True)
+                            position=(self.x, self.y), zmq_port=port, camera_mjpeg=True,
+                            camera_layout=camera_layout, preview_height=preview_height)
                 process = subprocess.Popen(command, stdin=subprocess.PIPE,
                                            stdout=subprocess.PIPE if capture_preview else subprocess.DEVNULL,
                                            stderr=subprocess.PIPE, pass_fds=(read_fd,) if read_fd is not None else (),
@@ -228,6 +235,7 @@ class CaptureManager:
             self.error = ''
             self.stopping = False
             self.port = port
+            self.preview_height = preview_height
             if player_camera:
                 with self.camera_ready:
                     self.camera_jpeg = b''
@@ -259,12 +267,13 @@ class CaptureManager:
                 self.camera_ready.notify_all()
 
     def read_preview(self, process) -> None:
-        size = 640 * 360 * 3
+        height = self.preview_height
+        size = 640 * height * 3
         while True:
             frame = process.stdout.read(size)
             if len(frame) != size:
                 break
-            image = Image.frombytes('RGB', (640, 360), frame)
+            image = Image.frombytes('RGB', (640, height), frame)
             buffer = io.BytesIO()
             image.save(buffer, format='JPEG', quality=74, optimize=False)
             with self.frame_ready:

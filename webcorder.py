@@ -106,7 +106,8 @@ def build_command(*, output: Path | None, width: int, height: int, fps: int, cam
                   camera_pipe: int | None = None, position: tuple[int, int] | None = None,
                   zmq_port: int | None = None, camera_mjpeg: bool = False,
                   desktop_audio: bool = False,
-                  screen_origin: tuple[int, int] = (0, 0)) -> list[str]:
+                  screen_origin: tuple[int, int] = (0, 0),
+                  camera_layout: str = 'floating', preview_height: int = 360) -> list[str]:
     cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'warning', '-y']
     capture_fps = 15 if output is None else fps
     if IS_WINDOWS:
@@ -125,7 +126,8 @@ def build_command(*, output: Path | None, width: int, height: int, fps: int, cam
         cam_index = 1
         if camera_pipe is not None:
             cmd += ['-thread_queue_size', '2', '-f', 'rawvideo', '-pixel_format', 'bgra',
-                    '-video_size', '320x320', '-framerate', '10', '-i', f'pipe:{camera_pipe}']
+                    '-video_size', '480x270' if camera_layout in ('top', 'bottom') else '320x320',
+                    '-framerate', '10', '-i', f'pipe:{camera_pipe}']
         elif IS_WINDOWS:
             cmd += ['-f', 'dshow', '-rtbufsize', '128M', '-i', f'video={camera}']
         else:
@@ -160,7 +162,12 @@ def build_command(*, output: Path | None, width: int, height: int, fps: int, cam
         image_index = next_index
         next_index += 1
         cmd += ['-loop', '1', '-i', str(image)]
-    if camera:
+    if camera and camera_layout in ('top', 'bottom'):
+        screen = '[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1[screen]'.format(w=width,h=height)
+        camera_filter = f'[{cam_index}:v]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1,format=yuv420p[cam]'
+        first, second = ('[cam]', '[screen]') if camera_layout == 'top' else ('[screen]', '[cam]')
+        filters = [screen, camera_filter, f'{first}{second}vstack=inputs=2,format=yuv420p[composed]']
+    elif camera:
         # Keep camera processing small for lower CPU use. Overlay at bottom right.
         if camera_pipe is not None:
             filters = [f'[{cam_index}:v]format=rgba[cam]']
@@ -189,9 +196,9 @@ def build_command(*, output: Path | None, width: int, height: int, fps: int, cam
     filters += ['[composed]crop=trunc(iw/2)*2:trunc(ih/2)*2[even]']
     if preview and output is not None:
         filters += ['[even]split=2[record][monitor]',
-                    '[monitor]fps=15,scale=640:360,format=rgb24[preview]']
+                    f'[monitor]fps=15,scale=640:{preview_height},format=rgb24[preview]']
     elif preview:
-        filters += ['[even]fps=15,scale=640:360,format=rgb24[preview]']
+        filters += [f'[even]fps=15,scale=640:{preview_height},format=rgb24[preview]']
     else:
         filters += ['[even]null[record]']
     if audio_index is not None and desktop_audio_index is not None:

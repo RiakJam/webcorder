@@ -28,6 +28,12 @@
         <div id="screenOptions" class="source-options">
           <button id="chooseScreenBtn" class="outline full">Preview desktop <span>↗</span></button>
           <div id="screenChosen" class="selected-source">Full desktop</div>
+          <label class="field-label" for="screenCameraLayout">CAMERA LAYOUT</label>
+          <select id="screenCameraLayout" class="select-field">
+            <option value="floating">Floating circle</option>
+            <option value="top">Camera above screen</option>
+            <option value="bottom">Camera below screen</option>
+          </select>
         </div>
         <div id="localOptions" class="source-options" hidden>
           <label class="file-button outline full">Choose a video file<input id="localFile" type="file" accept="video/*,.mkv,.mov,.m4v" hidden></label>
@@ -78,10 +84,18 @@
         </div>
         <div id="playerStage" class="stage player-stage" hidden>
           <div id="playerMedia" class="player-media">
-            <video id="localPlayer" controls controlslist="nofullscreen" playsinline preload="metadata" hidden></video>
-            <video id="webVideoPlayer" controls controlslist="nofullscreen" playsinline preload="metadata" hidden></video>
+            <video id="localPlayer" playsinline preload="metadata" hidden></video>
+            <video id="webVideoPlayer" playsinline preload="metadata" hidden></video>
             <iframe id="webFrame" title="Web video player" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" hidden></iframe>
             <div id="playerEmpty" class="stage-empty"><div class="stage-icon">▶</div><h2>Add a video</h2><p>Local file or web link</p></div>
+            <div id="mediaControls" class="media-controls" hidden>
+              <button id="mediaPlayBtn" type="button" aria-label="Play video">▶</button>
+              <span id="mediaTime">0:00 / 0:00</span>
+              <input id="mediaSeek" type="range" min="0" max="1000" value="0" aria-label="Video position">
+              <label for="mediaVolume">Volume</label>
+              <input id="mediaVolume" type="range" min="0" max="100" value="35" aria-label="Video volume">
+              <output id="mediaVolumeValue" for="mediaVolume">35%</output>
+            </div>
           </div>
           <div id="cameraDock" class="camera-dock">
             <div id="cameraBubble" class="camera-bubble" aria-label="Reaction camera" hidden><img id="cameraBubbleImage" alt="Live reaction camera"><span>CAMERA</span></div>

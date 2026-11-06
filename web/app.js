@@ -1,5 +1,113 @@
 const $ = (id) => document.getElementById(id);
-const state = { source: 'screen', viewer: 'preview', camera: localStorage.getItem('webcorder-camera') || '', cameraFirst: localStorage.getItem('webcorder-camera-first') === 'true', status: null, busy: false, previewConnected: false, cameraConnected: false, localUrl: null, localSize: null, webUrl: null, webKind: null, webSize: null, installPrompt: null };
+const state = { source: 'screen', viewer: 'preview', camera: localStorage.getItem('webcorder-camera') || '', cameraFirst: localStorage.getItem('webcorder-camera-first') === 'true', status: null, busy: false, previewConnected: false, cameraConnected: false, localUrl: null, localSize: null, webUrl: null, webKind: null, webSize: null, embedPlayer: null, embedReady: false, loadId: 0, installPrompt: null };
+const mediaVolume = Math.min(100, Math.max(0, Number(localStorage.getItem('webcorder-media-volume') ?? 35) || 0));
+let playerSdkPromises = {};
+function loadPlayerSdk(name, url, ready) {
+  if (ready()) return Promise.resolve();
+  if (!playerSdkPromises[name]) playerSdkPromises[name] = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = url; script.onload = () => {
+      if (name !== 'YouTube') resolve();
+      else if (ready()) resolve();
+    }; script.onerror = () => reject(new Error(`${name} player controls could not load.`));
+    if (name === 'YouTube') window.onYouTubeIframeAPIReady = resolve;
+    document.head.append(script);
+  });
+  return playerSdkPromises[name];
+}
+function activeMedia() {
+  if (state.source === 'local' && state.localUrl) return $('localPlayer');
+  if (state.source === 'web' && state.webKind === 'video') return $('webVideoPlayer');
+  return null;
+}
+function mediaClock(seconds) {
+  if (!Number.isFinite(seconds)) return '0:00';
+  return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+}
+function updateMediaControls() {
+  const native = activeMedia();
+  const embedded = state.source === 'web' && state.embedReady ? state.embedPlayer : null;
+  $('mediaControls').hidden = !native && !embedded;
+  if (!native && !embedded) return;
+  let duration = 0, current = 0, playing = false;
+  if (native) { duration = native.duration; current = native.currentTime; playing = !native.paused && !native.ended; }
+  else if (state.webKind === 'youtube') {
+    duration = embedded.getDuration(); current = embedded.getCurrentTime();
+    playing = embedded.getPlayerState() === YT.PlayerState.PLAYING;
+  } else {
+    duration = state.vimeoDuration || 0; current = state.vimeoCurrent || 0; playing = state.vimeoPlaying || false;
+  }
+  $('mediaPlayBtn').textContent = playing ? '❚❚' : '▶';
+  $('mediaPlayBtn').setAttribute('aria-label', playing ? 'Pause video' : 'Play video');
+  $('mediaTime').textContent = `${mediaClock(current)} / ${mediaClock(duration)}`;
+  if (!$('mediaSeek').matches(':active') && document.activeElement !== $('mediaSeek')) $('mediaSeek').value = duration > 0 ? Math.round(current / duration * 1000) : 0;
+  $('mediaSeek').disabled = !duration;
+}
+function applyMediaVolume() {
+  const volume = Number($('mediaVolume').value);
+  localStorage.setItem('webcorder-media-volume', String(volume));
+  $('mediaVolumeValue').textContent = `${volume}%`;
+  $('localPlayer').volume = volume / 100;
+  $('webVideoPlayer').volume = volume / 100;
+  if (state.embedReady && state.webKind === 'youtube') state.embedPlayer.setVolume(volume);
+  if (state.embedReady && state.webKind === 'vimeo') state.embedPlayer.setVolume(volume / 100).catch(() => {});
+}
+function clearEmbed() {
+  state.loadId++;
+  if (state.embedPlayer) {
+    try { Promise.resolve(state.embedPlayer.destroy()).catch(() => {}); } catch (_) {}
+  }
+  state.embedPlayer = null; state.embedReady = false;
+  state.vimeoDuration = 0; state.vimeoCurrent = 0; state.vimeoPlaying = false;
+  const frame = $('webFrame');
+  if (frame) frame.replaceWith(Object.assign(document.createElement('iframe'), {
+    id:'webFrame', title:'Web video player', allow:'autoplay; encrypted-media; picture-in-picture', referrerPolicy:'strict-origin-when-cross-origin', hidden:true
+  }));
+  updateMediaControls();
+}
+function youtubeErrorMessage(code) {
+  if (code === 100) return 'This YouTube video was removed or is private.';
+  if (code === 101 || code === 150) return 'The video owner does not allow this video to play in embedded apps.';
+  if (code === 153) return 'YouTube could not identify the embedding app. Reload Webcorder and try again.';
+  if (code === 2) return 'This YouTube link does not contain a valid video ID.';
+  return `YouTube could not play this video here (error ${code}).`;
+}
+async function setupEmbed(kind, id, url, loadId) {
+  try {
+    if (kind === 'youtube') {
+      await loadPlayerSdk('YouTube', 'https://www.youtube.com/iframe_api', () => !!window.YT?.Player);
+      if (loadId !== state.loadId) return;
+      const player = new YT.Player('webFrame', {videoId:id, playerVars:{autoplay:0, controls:0, fs:0, playsinline:1, origin:location.origin}, events:{onReady:(event) => {
+        if (loadId !== state.loadId) return;
+        state.embedPlayer = event.target; state.embedReady = true; applyMediaVolume(); updateMediaControls();
+        $('webLinkState').textContent = 'Video ready';
+      }, onStateChange:updateMediaControls, onError:(event) => {
+        if (loadId !== state.loadId) return;
+        const message = youtubeErrorMessage(event.data);
+        $('webLinkState').textContent = message;
+        $('externalLinkBtn').hidden = false;
+        note(`${message} Use Open in browser if embedding is blocked.`, true);
+      }}});
+      state.embedPlayer = player;
+    } else {
+      await loadPlayerSdk('Vimeo', 'https://player.vimeo.com/api/player.js', () => !!window.Vimeo?.Player);
+      if (loadId !== state.loadId) return;
+      const player = new Vimeo.Player($('webFrame'), {url, controls:false, title:false, byline:false, portrait:false});
+      state.embedPlayer = player;
+      player.on('timeupdate', data => { state.vimeoCurrent = data.seconds; state.vimeoDuration = data.duration; updateMediaControls(); });
+      player.on('play', () => { state.vimeoPlaying = true; updateMediaControls(); });
+      player.on('pause', () => { state.vimeoPlaying = false; updateMediaControls(); });
+      await player.ready();
+      if (loadId !== state.loadId) return;
+      state.embedReady = true; applyMediaVolume(); updateMediaControls();
+      $('webLinkState').textContent = 'Video ready';
+    }
+  } catch (error) {
+    if (loadId !== state.loadId) return;
+    note(`${error.message} Use the video provider's controls or open it in a browser.`, true);
+    $('webFrame').src = url;
+  }
+}
 
 async function request(path, body) {
   const response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: body === undefined ? {} : {'Content-Type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -45,7 +153,7 @@ async function setSource(source) {
     state.busy = false;
   }
   if (state.source === 'web' && source !== 'web') {
-    $('webFrame').src = 'about:blank';
+    clearEmbed();
     $('webVideoPlayer').pause();
     $('webVideoPlayer').removeAttribute('src');
     $('webVideoPlayer').load();
@@ -64,11 +172,12 @@ async function setSource(source) {
   $('playerTab').hidden = source === 'screen';
   $('localPlayer').hidden = source !== 'local' || !state.localUrl;
   $('webVideoPlayer').hidden = source !== 'web' || state.webKind !== 'video';
-  $('webFrame').hidden = source !== 'web' || state.webKind !== 'frame';
+  $('webFrame').hidden = source !== 'web' || !['frame','youtube','vimeo'].includes(state.webKind);
   if (source !== 'local') $('localPlayer').pause();
   if (source !== 'web') $('webVideoPlayer').pause();
   $('playerEmpty').hidden = source === 'local' ? !!state.localUrl : source === 'web' ? !$('webFrame').hidden || !$('webVideoPlayer').hidden : false;
   $('playerEmpty').querySelector('p').textContent = source === 'web' ? 'Paste a link' : 'Choose a file';
+  updateMediaControls();
   setViewer(source === 'screen' ? 'preview' : 'player');
   if (state.status) updateStatus(state.status);
   resizePlayer();
@@ -94,7 +203,8 @@ async function refreshCameras() {
 }
 function selectedSettings(mode) {
   const settings = { mode, source: state.source, camera: $('cameraSelect').value, background: $('backgroundSelect').value,
-    mic: $('micToggle').checked, desktopAudio: $('audioToggle').checked, fps: Number($('fpsSelect').value) };
+    mic: $('micToggle').checked, desktopAudio: $('audioToggle').checked, fps: Number($('fpsSelect').value),
+    cameraLayout: $('screenCameraLayout').value };
   if (mode === 'record' && state.source !== 'screen') {
     const video = $('playerMedia').getBoundingClientRect();
     const camera = $('cameraDock').getBoundingClientRect();
@@ -177,6 +287,8 @@ function updateStatus(data) {
   $('stopBtn').disabled = !active || state.busy;
   $('previewBtn').disabled = data.mode === 'preview' || data.mode === 'record' || state.busy;
   if (active && state.source === 'screen') connectPreview();
+  if (data.width && data.height) $('previewStage').style.setProperty('--screen-stack-ratio', String(data.width / (data.height * 2)));
+  $('previewStage').classList.toggle('stacked-screen', state.source === 'screen' && !!$('cameraSelect').value && ['top', 'bottom'].includes($('screenCameraLayout').value));
   const showCamera = active && state.source !== 'screen' && !!$('cameraSelect').value;
   $('cameraBubble').hidden = !showCamera;
   $('cameraDockText').hidden = showCamera;
@@ -204,6 +316,7 @@ async function chooseLocal(event) {
   $('playerEmpty').hidden = true;
   $('localPlayer').hidden = false;
   if (!await setSource('local')) return;
+  applyMediaVolume(); updateMediaControls();
   $('localPlayer').play().catch(() => note('Press play to start the local video.'));
 }
 function openWebLink() {
@@ -214,7 +327,7 @@ function openWebLink() {
   const hostname = url.hostname.toLowerCase();
   state.webUrl = url.toString();
   state.webSize = {width:1280, height:720};
-  $('webFrame').src = 'about:blank'; $('webFrame').hidden = true;
+  clearEmbed(); $('webFrame').hidden = true;
   $('webVideoPlayer').pause(); $('webVideoPlayer').removeAttribute('src'); $('webVideoPlayer').load(); $('webVideoPlayer').hidden = true;
   state.webKind = null;
   $('externalLinkBtn').hidden = true;
@@ -227,34 +340,40 @@ function openWebLink() {
     resizePlayer();
     return;
   }
-  let embed = null;
+  let embed = null, embedKind = null, embedId = null;
   if (hostname === 'youtu.be') {
     const id = url.pathname.split('/').filter(Boolean)[0];
-    if (/^[\w-]{11}$/.test(id || '')) embed = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&fs=0`;
-  } else if (['youtube.com','www.youtube.com','m.youtube.com','www.youtube-nocookie.com'].includes(hostname)) {
+    if (/^[\w-]{11}$/.test(id || '')) { embed = `https://www.youtube.com/embed/${id}`; embedKind = 'youtube'; embedId = id; }
+  } else if (['youtube.com','www.youtube.com','m.youtube.com','music.youtube.com','youtube-nocookie.com','www.youtube-nocookie.com'].includes(hostname)) {
     if (url.pathname.startsWith('/shorts/')) state.webSize = {width:720, height:1280};
     const id = url.searchParams.get('v') || url.pathname.match(/^\/(?:shorts|live|embed)\/([\w-]{11})/)?.[1];
-    if (/^[\w-]{11}$/.test(id || '')) embed = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&fs=0`;
+    if (/^[\w-]{11}$/.test(id || '')) { embed = `https://www.youtube.com/embed/${id}`; embedKind = 'youtube'; embedId = id; }
   } else if (hostname === 'vimeo.com' || hostname === 'www.vimeo.com' || hostname === 'player.vimeo.com') {
     const id = url.pathname.match(/\/(\d+)(?:\/|$)/)?.[1];
-    if (id) embed = `https://player.vimeo.com/video/${id}?autoplay=1&fullscreen=0`;
+    if (id) { embed = `https://player.vimeo.com/video/${id}`; embedKind = 'vimeo'; embedId = id; }
   }
   if (/\.(?:mp4|webm|ogg)(?:$|\?)/i.test(url.pathname + url.search)) {
     state.webKind = 'video';
     $('webVideoPlayer').src = url.toString();
     $('webVideoPlayer').hidden = false;
+    applyMediaVolume();
     $('webVideoPlayer').play().catch(() => {});
     $('webLinkState').textContent = 'Video ready';
   } else {
-    state.webKind = 'frame';
-    $('webFrame').src = embed || url.toString();
+    state.webKind = embedKind || 'frame';
+    if (embedKind) {
+      $('webFrame').src = embedKind === 'youtube' ? `${embed}?enablejsapi=1&controls=0&fs=0&playsinline=1&origin=${encodeURIComponent(location.origin)}` : `${embed}?controls=0&title=0&byline=0&portrait=0`;
+      setupEmbed(embedKind, embedId, url.toString(), state.loadId);
+    }
+    else $('webFrame').src = url.toString();
     $('webFrame').hidden = false;
-    $('webLinkState').textContent = embed ? 'Video ready' : 'Page ready';
+    $('webLinkState').textContent = embed ? 'Loading video…' : 'Page ready';
     $('externalLinkBtn').hidden = false;
   }
   $('playerEmpty').hidden = true;
   setViewer('player');
   resizePlayer();
+  updateMediaControls();
   note('Video ready.');
 }
 function openExternalLink() {
@@ -290,6 +409,18 @@ function setupInstall() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
 }
 function bind() {
+  const savedLayout = localStorage.getItem('webcorder-screen-layout');
+  if (['floating', 'top', 'bottom'].includes(savedLayout)) $('screenCameraLayout').value = savedLayout;
+  $('screenCameraLayout').addEventListener('change', async () => {
+    if (state.status?.mode === 'record') {
+      $('screenCameraLayout').value = localStorage.getItem('webcorder-screen-layout') || 'floating';
+      note('Stop the recording before changing the camera layout.', true);
+      return;
+    }
+    localStorage.setItem('webcorder-screen-layout', $('screenCameraLayout').value);
+    $('previewStage').classList.toggle('stacked-screen', !!$('cameraSelect').value && $('screenCameraLayout').value !== 'floating');
+    if (state.source === 'screen' && state.status?.mode === 'preview') await begin('preview');
+  });
   $('settingsBtn').addEventListener('click', () => {
     const shown = document.body.classList.toggle('show-settings');
     $('settingsBtn').setAttribute('aria-expanded', String(shown));
@@ -307,6 +438,38 @@ function bind() {
     state.webSize = {width:$('webVideoPlayer').videoWidth, height:$('webVideoPlayer').videoHeight};
     resizePlayer();
   });
+  for (const id of ['localPlayer', 'webVideoPlayer']) {
+    for (const event of ['play', 'pause', 'timeupdate', 'durationchange', 'ended']) $(id).addEventListener(event, updateMediaControls);
+  }
+  $('mediaVolume').value = mediaVolume;
+  applyMediaVolume();
+  $('mediaVolume').addEventListener('input', applyMediaVolume);
+  $('mediaPlayBtn').addEventListener('click', async () => {
+    const native = activeMedia();
+    if (native) { if (native.paused) await native.play().catch(error => note(error.message, true)); else native.pause(); }
+    else if (state.embedReady && state.webKind === 'youtube') {
+      if (state.embedPlayer.getPlayerState() === YT.PlayerState.PLAYING) state.embedPlayer.pauseVideo();
+      else state.embedPlayer.playVideo();
+    } else if (state.embedReady && state.webKind === 'vimeo') {
+      if (state.vimeoPlaying) await state.embedPlayer.pause().catch(error => note(error.message, true));
+      else await state.embedPlayer.play().catch(error => note(error.message, true));
+    }
+    updateMediaControls();
+  });
+  $('mediaSeek').addEventListener('input', () => {
+    const native = activeMedia();
+    const duration = native?.duration || (state.webKind === 'youtube' && state.embedReady ? state.embedPlayer.getDuration() : state.vimeoDuration);
+    $('mediaTime').textContent = `${mediaClock(duration * Number($('mediaSeek').value) / 1000)} / ${mediaClock(duration)}`;
+  });
+  $('mediaSeek').addEventListener('change', () => {
+    const native = activeMedia();
+    const duration = native?.duration || (state.webKind === 'youtube' && state.embedReady ? state.embedPlayer.getDuration() : state.vimeoDuration);
+    const position = duration * Number($('mediaSeek').value) / 1000;
+    if (native) native.currentTime = position;
+    else if (state.embedReady && state.webKind === 'youtube') state.embedPlayer.seekTo(position, true);
+    else if (state.embedReady && state.webKind === 'vimeo') state.embedPlayer.setCurrentTime(position).catch(error => note(error.message, true));
+    $('mediaSeek').blur();
+  });
   window.addEventListener('resize', resizePlayer);
   $('openLinkBtn').addEventListener('click', openWebLink);
   $('externalLinkBtn').addEventListener('click', openExternalLink);
@@ -319,8 +482,9 @@ function bind() {
   $('cameraSelect').addEventListener('change', () => {
     state.camera = $('cameraSelect').value;
     localStorage.setItem('webcorder-camera', state.camera);
-    if (state.source !== 'screen' && state.status?.mode !== 'record') begin('preview');
-    else note('Camera selected. Restart preview to apply the change.');
+    if (state.status?.mode === 'record') note('Stop the recording before changing the camera.', true);
+    else if (state.status?.mode === 'preview') begin('preview');
+    else note('Camera selected. Start preview to see the layout.');
   });
   $('refreshCamerasBtn').addEventListener('click', () => refreshCameras().catch(e => note(e.message,true)));
   $('customBackground').addEventListener('change', uploadBackground);
@@ -354,4 +518,4 @@ function bind() {
     if (!document.fullscreenElement && state.source !== 'screen' && state.status?.mode === 'record' && !state.busy) stop();
   });
 }
-bind(); $('playerTab').hidden = true; $('playerStage').classList.toggle('camera-first', state.cameraFirst); $('cameraOrderBtn').textContent = state.cameraFirst ? '↓ Camera below video' : '↑ Camera on top'; setupInstall(); refreshCameras().catch(e => note(e.message,true)); poll(); setInterval(poll, 1000); setInterval(() => refreshCameras().catch(()=>{}), 7000);
+bind(); $('playerTab').hidden = true; $('playerStage').classList.toggle('camera-first', state.cameraFirst); $('cameraOrderBtn').textContent = state.cameraFirst ? '↓ Camera below video' : '↑ Camera on top'; setupInstall(); refreshCameras().catch(e => note(e.message,true)); poll(); setInterval(poll, 1000); setInterval(updateMediaControls, 500); setInterval(() => refreshCameras().catch(()=>{}), 7000);
